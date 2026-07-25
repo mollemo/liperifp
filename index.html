@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Manse FP - Naperoleiri (Liperi) 27–31.7</title>
+<title>Liperin leiri 27–31.7</title>
 <style>
   :root {
     --red: #CC1F1F;
@@ -250,9 +250,9 @@
 
 <div class="topbar">
 <header>
-  <img class="logo" src="logo.png" alt="Manse F-tytöt">
+  <img class="logo" src="logo.png" alt="Manse PP">
   <div class="head-text">
-    <h1>Manse FP - Naperoleiri (Liperi) 27–31.7</h1>
+    <h1>Liperin leiri 27–31.7</h1>
     <div class="clock" id="clock"></div>
   </div>
 </header>
@@ -281,7 +281,7 @@
 
   <div id="eventList"></div>
 
-  <footer>Liperin leiri · F-pojat</footer>
+  <footer>Liperin leiri · Manse PP</footer>
 </main>
 
 <script>
@@ -291,24 +291,138 @@ function mapLink(label, address) {
   return `<a class="maplink" href="${url}" target="_blank" rel="noopener">📍 ${label}</a>`;
 }
 
+// ─── ETÄISYYDET (staattiset koordinaatit + Nominatim varalla uusille osoitteille) ─
+// Kaikkien tunnettujen osoitteiden koordinaatit on haettu valmiiksi, joten normaali
+// käyttö ei riipu ulkoisesta rajapinnasta eikä sen pyyntörajoituksista.
+const KNOWN_COORDS = {
+  "Patteristontie 12 E, 80400 Ylämylly": { lat: 62.6289731, lon: 29.5507245 },
+  "Patteristontie 12 C, 80400 Ylämylly": { lat: 62.6294293, lon: 29.5489825 },
+  "Pärnävaarantie, 80400 Ylämylly": { lat: 62.6400962, lon: 29.5693859 },
+  "Patteristontie 12 e, 80400 Jyrinkylä": { lat: 62.628563, lon: 29.547510 },
+  "Kirkkotie 2, 83400 Viinijärvi": { lat: 62.6451915, lon: 29.2342688 },
+  "Koulutie 2, 80400 Liperi": { lat: 62.5330546, lon: 29.3719277 },
+  "Honkatie 8, 80400 Ylämylly": { lat: 62.615138, lon: 29.516892 },
+  "Tykistöntie 3s, 80400 Liperi": { lat: 62.626146, lon: 29.551579 },
+  "Laavupolku 4–6, 80400 Jyrinkylä": { lat: 62.622127, lon: 29.5516432 },
+};
+
+const geoCache = {}; // osoite -> {lat, lon} | null (haku epäonnistui) | undefined (ei vielä haettu)
+const geoQueue = [];
+let geoQueueRunning = false;
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function geocodeAddress(addr) {
+  if (KNOWN_COORDS[addr]) return Promise.resolve(KNOWN_COORDS[addr]);
+  if (geoCache[addr] !== undefined) return Promise.resolve(geoCache[addr]);
+  return new Promise(resolve => {
+    geoQueue.push({ addr, resolve });
+    processGeoQueue();
+  });
+}
+
+async function processGeoQueue() {
+  if (geoQueueRunning) return;
+  geoQueueRunning = true;
+  while (geoQueue.length) {
+    const { addr, resolve } = geoQueue.shift();
+    if (geoCache[addr] !== undefined) { resolve(geoCache[addr]); continue; }
+    try {
+      const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fi&q=" + encodeURIComponent(addr);
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      const data = await res.json();
+      geoCache[addr] = (data && data[0]) ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) } : null;
+    } catch (err) {
+      geoCache[addr] = null;
+    }
+    resolve(geoCache[addr]);
+    if (geoQueue.length) await sleep(1100); // kunnioita ~1 pyyntö/sekunti -rajaa (vain tuntemattomille osoitteille)
+  }
+  geoQueueRunning = false;
+}
+
+function haversineKm(a, b) {
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLon = (b.lon - a.lon) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(h));
+}
+
+function formatDistance(km) {
+  if (km <= 1.2) {
+    const m = Math.round(km * 1000 / 50) * 50; // pyöristys lähimpään 50 m
+    return { html: `<span style="color:var(--sub);">🚶 ~${m} m linnuntietä — kävelymatka</span>`, needsCar: false };
+  }
+  return { html: `<span style="color:var(--sub);">🚗 ~${km.toFixed(1)} km linnuntietä — autolla</span>`, needsCar: true };
+}
+
 // ─── OSOITTEET ───────────────────────────────────────────────────────────
 const PLACES = {
-  // Majoituspaikat
-  patteristo:  { name: "Ylämyllyn koulu, Patteriston yksikkö", addr: "Laavupolku 2, 80400 Ylämylly" },
-  paloaukea:   { name: "Ylämyllyn koulu, Paloaukean yksikkö",  addr: "Patteristontie 12 e, 80400 Ylämylly" },
-  jyri:        { name: "Ylämyllyn koulu, Jyrin yksikkö",       addr: "Patteristontie 12 a, 80400 Ylämylly" },
-  paloaukeaPk: { name: "Paloaukean päiväkoti",                 addr: "Patteristontie 12 D, 80400 Ylämylly" },
-  lautasuoPk:  { name: "Lautasuon päiväkoti",                  addr: "Ylämyllyntie 52, 80400 Ylämylly" },
-  liperinKoulu:{ name: "Liperin koulu",                        addr: "Koulukuja 2, 83100 Liperi" },
+  // Majoituspaikka
+  patteristo:  { name: "Ylämyllyn koulu, Paloaukean yksikkö", addr: "Patteristontie 12 E, 80400 Ylämylly" },
   // Muut paikat
   parnavaara:  { name: "Pärnävaaran liikunta-alue",    addr: "Pärnävaarantie, 80400 Ylämylly" },
-  ruokailu:    { name: "Ruokailupaikka (TÄYDENNÄ)",    addr: "Osoite, 83100 Liperi" },
-  kentta1:     { name: "Pelikenttä 1 (TÄYDENNÄ)",      addr: "Osoite, 83100 Liperi" },
+  ruokailu:    { name: "Jyrin ruokala",                addr: "Patteristontie 12 C, 80400 Ylämylly" },
 };
+
+// Selvittää tapahtuman sijainnin osoitteen: e.loc voi olla PLACES-avain
+// tai FIELDS-taulukon kentän nimi (esim. "9. Jyrin pesäpallokenttä").
+function eventLocation(e) {
+  if (!e || !e.loc) return null;
+  const p = PLACES[e.loc];
+  if (p) return { name: p.name, addr: p.addr };
+  const f = fieldByName(e.loc);
+  if (f) return { name: f.name, addr: f.addr };
+  return null;
+}
 
 function P(key) {
   const p = PLACES[key];
   return mapLink(p.name + " (" + p.addr + ")", p.name + ", " + p.addr);
+}
+
+// ─── PELIKENTÄT ──────────────────────────────────────────────────────────
+// Kenttien nimet vastaavat Sheetin Kenttä-sarakkeen pudotusvalikon arvoja,
+// jotta ottelun kenttä osaa hakea oikean osoitteen ja pinnan.
+const FIELDS = [
+  { name: "1. Viinijärven Pallokenttä",     surface: "hiekkatekonurmi",          addr: "Kirkkotie 2, 83400 Viinijärvi", wc: "Pukukopeilla", parking: "Pukukoppien takana", kiosk: true, pesisTV: true },
+  { name: "2. Viinijärven Pallokenttä",     surface: "hiekkatekonurmi",          addr: "Kirkkotie 2, 83400 Viinijärvi", wc: "Pukukopeilla", parking: "Pukukoppien takana", kiosk: true, pesisTV: true },
+  { name: "3. Viinijärven Pallokenttä",     surface: "hiekkakenttä",             addr: "Kirkkotie 2, 83400 Viinijärvi", wc: "Pukukopeilla", parking: "Pukukoppien takana", kiosk: true, pesisTV: false },
+  { name: "4. Liperin kirkonkylän kenttä",  surface: "hiekkakenttä",             addr: "Koulutie 2, 80400 Liperi", wc: "Jääkiekkokaukalon pukukopit", parking: "Koulun parkkipaikka ja kentän pääty", kiosk: true, pesisTV: true },
+  { name: "5. Liperin kirkonkylän kenttä",  surface: "hiekkakenttä",             addr: "Koulutie 2, 80400 Liperi", wc: "Jääkiekkokaukalon pukukopit", parking: "Koulun parkkipaikka ja kentän pääty", kiosk: true, pesisTV: true },
+  { name: "6. Liperin kirkonkylän kenttä",  surface: "hiekkakenttä",             addr: "Koulutie 2, 80400 Liperi", wc: "Jääkiekkokaukalon pukukopit", parking: "Koulun parkkipaikka ja kentän pääty", kiosk: true, pesisTV: true },
+  { name: "7. Honkamontun kenttä",          surface: "hiekkakenttä",             addr: "Honkatie 8, 80400 Ylämylly", wc: "Erillinen rakennus kentänlaidalla", parking: "Kadun varressa n. 15 autolle. Kenttä on alempana \"montussa\", jonne joukkueen busseilla mahdollisuus ajaa.", kiosk: true, pesisTV: true },
+  { name: "8. Honkamontun kenttä",          surface: "hiekkakenttä",             addr: "Honkatie 8, 80400 Ylämylly", wc: "Erillinen rakennus kentänlaidalla", parking: "Kadun varressa n. 15 autolle. Kenttä on alempana \"montussa\", jonne joukkueen busseilla mahdollisuus ajaa.", kiosk: true, pesisTV: true },
+  { name: "9. Jyrin pesäpallokenttä",       surface: "hiekkatekonurmi",          addr: "Tykistöntie 3s, 80400 Liperi", mapUrl: "https://www.google.com/maps/place/Tykist%C3%B6ntie+3s,+80400+Liperi,+Suomi/@62.6261484,29.5490041,378m/data=!3m2!1e3!4b1!4m6!3m5!1s0x469b822e8cac619b:0x2783cd666e62f275!8m2!3d62.626146!4d29.551579!16s%2Fg%2F11ldkpf6dr?entry=ttu&g_ep=EgoyMDI2MDcyMi4wIKXMDSoASAFQAw%3D%3D", wc: "Jalkapallokentän huoltorakennuksessa, Patteristontie 12 e, 80400 Liperi", parking: "Kentän päädyssä", kiosk: true, pesisTV: true },
+  { name: "10. Jyrin pesäpallokenttä",      surface: "hiekkatekonurmi",          addr: "Tykistöntie 3s, 80400 Liperi", mapUrl: "https://www.google.com/maps/place/Tykist%C3%B6ntie+3s,+80400+Liperi,+Suomi/@62.6261484,29.5490041,378m/data=!3m2!1e3!4b1!4m6!3m5!1s0x469b822e8cac619b:0x2783cd666e62f275!8m2!3d62.626146!4d29.551579!16s%2Fg%2F11ldkpf6dr?entry=ttu&g_ep=EgoyMDI2MDcyMi4wIKXMDSoASAFQAw%3D%3D", wc: "Jalkapallokentän huoltorakennuksessa, Patteristontie 12 e, 80400 Liperi", parking: "Kentän päädyssä", kiosk: true, pesisTV: true },
+  { name: "11. Jyrin kenttä",               surface: "tekonurmi, kumirouhe (ei saa pelata piikkareilla)", addr: "Tykistöntie 3s, 80400 Liperi", mapUrl: "https://www.google.com/maps/place/Tykist%C3%B6ntie+3s,+80400+Liperi,+Suomi/@62.6261484,29.5490041,378m/data=!3m2!1e3!4b1!4m6!3m5!1s0x469b822e8cac619b:0x2783cd666e62f275!8m2!3d62.626146!4d29.551579!16s%2Fg%2F11ldkpf6dr?entry=ttu&g_ep=EgoyMDI2MDcyMi4wIKXMDSoASAFQAw%3D%3D", wc: "Jalkapallokentän huoltorakennuksessa, Patteristontie 12 e, 80400 Liperi", parking: "Kentän päädyssä", kiosk: true, pesisTV: true },
+  { name: "12. Jyrin kenttä",               surface: "tekonurmi, kumirouhe (ei saa pelata piikkareilla)", addr: "Tykistöntie 3s, 80400 Liperi", mapUrl: "https://www.google.com/maps/place/Tykist%C3%B6ntie+3s,+80400+Liperi,+Suomi/@62.6261484,29.5490041,378m/data=!3m2!1e3!4b1!4m6!3m5!1s0x469b822e8cac619b:0x2783cd666e62f275!8m2!3d62.626146!4d29.551579!16s%2Fg%2F11ldkpf6dr?entry=ttu&g_ep=EgoyMDI2MDcyMi4wIKXMDSoASAFQAw%3D%3D", wc: "Jalkapallokentän huoltorakennuksessa, Patteristontie 12 e, 80400 Liperi", parking: "Kentän päädyssä", kiosk: true, pesisTV: true },
+  { name: "13. Jyrin kenttä",               surface: "tekonurmi, kumirouhe (ei saa pelata piikkareilla)", addr: "Tykistöntie 3s, 80400 Liperi", mapUrl: "https://www.google.com/maps/place/Tykist%C3%B6ntie+3s,+80400+Liperi,+Suomi/@62.6261484,29.5490041,378m/data=!3m2!1e3!4b1!4m6!3m5!1s0x469b822e8cac619b:0x2783cd666e62f275!8m2!3d62.626146!4d29.551579!16s%2Fg%2F11ldkpf6dr?entry=ttu&g_ep=EgoyMDI2MDcyMi4wIKXMDSoASAFQAw%3D%3D", wc: "Jalkapallokentän huoltorakennuksessa, Patteristontie 12 e, 80400 Liperi", parking: "Kentän päädyssä", kiosk: true, pesisTV: true },
+  { name: "14. Monitoimikenttä (Paloaukea)", surface: "kumirouhekenttä (ei saa pelata piikkareilla)", addr: "Patteristontie 12 e, 80400 Jyrinkylä", wc: "Paloaukean koululla, Patteristontie 12 e, 80400 Liperi (n. 150 m päässä)", parking: "Paloaukean koululla, Patteristontie 12 e, 80400 Liperi (n. 150 m päässä)" },
+  { name: "15. Patteriston hiekkakenttä", surface: "hiekkakenttä",           addr: "Laavupolku 4–6, 80400 Jyrinkylä", wc: "Jääkiekkokaukalon pukukopit", parking: "Koulun parkkipaikat", kiosk: "Kioski ja kanslia koululla" },
+  { name: "16. Patteriston yläkoulun kenttä", surface: "hiekkakenttä",           addr: "Laavupolku 4–6, 80400 Jyrinkylä", wc: "Jääkiekkokaukalon pukukopit", parking: "Koulun parkkipaikat", kiosk: "Kioski ja kanslia koululla" },
+];
+
+function fieldByName(name) {
+  const n = String(name == null ? "" : name).trim();
+  return FIELDS.find(f => f.name === n) || null;
+}
+
+function fieldInfo(name, opts) {
+  const f = fieldByName(name);
+  if (!f) return "";
+  const showPesis = !(opts && opts.noPesisTV);
+  const pesisBadge = (f.pesisTV && showPesis) ? ' <span style="background:#e2e007;color:#1a1a2e;font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;vertical-align:middle;">PESIS TV</span>' : "";
+  const linkHtml = f.mapUrl
+    ? `<a class="maplink" href="${esc(f.mapUrl)}" target="_blank" rel="noopener">📍 ${f.name}</a>`
+    : mapLink(f.name, f.addr);
+  return `${linkHtml}${pesisBadge}`
+    + `<br>Pinta: ${f.surface}`
+    + (f.wc ? `<br>Wc ja vesipiste: ${f.wc}` : "")
+    + (f.parking ? `<br>Parkkipaikka: ${f.parking}` : "")
+    + (f.kiosk ? `<br>${f.kiosk === true ? "Kioski" : f.kiosk}` : "");
 }
 
 // ─── YHTEYSTIEDOT ────────────────────────────────────────────────────────
@@ -333,105 +447,126 @@ const CONTACTS = [
   { role: "Seuran puheenjohtaja", name: "Juha Kröger",         email: "juha.kroger@kostamokoti.fi",       phone: "0505532156" },
 ];
 
-// ─── TALKOOT JA KYYDIT ───────────────────────────────────────────────────
-// Kootut talkoovuorot ja kyydit koko viikolta.
-// - Tavallinen talkoovuoro: ei type-kenttää, roles = roolit ja nimet
-// - Kyyti: type: "kyyti", roles = autot ja kuljettajat
-//   Kuljettajan kohdalle voi merkitä myös paikkamäärän, esim. "Maija (4 paikkaa)"
-// Tyhjä person ("") näkyy listassa punaisena "Avoin"-merkintänä.
-const TALKOOT = [
-  // ── Ma 27.7 ──
-  { key: "2026-07-27", time: "12:00", type: "kyyti", title: "Kyydit otteluihin", place: "Majoituskoululta kentälle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
+// ─── OTTELUT JA TALKOOT (valmiiksi kirjoitettu, ei Sheet-yhteyttä) ────────
+// Roolit pelistatuksen mukaan.
+const HOME_ROLE_DEFS = [
+  { key: "kirjuri",         label: "Kirjuri" },
+  { key: "takarajatuomari", label: "Takarajatuomari" },
+  { key: "tuomari2",        label: "2. tuomari" },
+];
+const AWAY_ROLE_DEFS = [
+  { key: "tuomari3",   label: "3. tuomari" },
+  { key: "tulostaulu", label: "Tulostaulu" },
+];
+
+// Valmiiksi täytetty ottelu- ja talkoolista. home:true = joukkue pelaa kotipelinä
+// (3 roolia), home:false = vieraspelinä (2 roolia). kentta viittaa täsmälleen
+// FIELDS-taulukon kentän nimeen, jolloin osoite/kartta/lisätiedot tulevat mukaan.
+const GAMES = [
+  { id: "g1",  pvm: "27.7", klo: "14:30", kentta: "15. Patteriston hiekkakenttä", joukkueet: "JoMa Musta – Manse PP", home: false,
+    roles: { tuomari3: "Akseli Ko", tulostaulu: "Einari" } },
+  { id: "g2",  pvm: "27.7", klo: "18:30", kentta: "4. Liperin kirkonkylän kenttä", joukkueet: "Manse PP – KPL Pepet", home: true,
+    roles: { kirjuri: "Oliver", takarajatuomari: "Urho", tuomari2: "Alvar" } },
+  { id: "g3",  pvm: "28.7", klo: "09:30", kentta: "1. Viinijärven Pallokenttä", joukkueet: "Manse PP – HP", home: true,
+    roles: { kirjuri: "Urho", takarajatuomari: "Einari", tuomari2: "Otso" } },
+  { id: "g4",  pvm: "28.7", klo: "14:30", kentta: "13. Jyrin kenttä", joukkueet: "Joma Punainen – Manse PP", home: false,
+    roles: { tuomari3: "Oliver", tulostaulu: "Einari" } },
+  { id: "g5",  pvm: "29.7", klo: "10:30", kentta: "2. Viinijärven Pallokenttä", joukkueet: "SMJ P16 pun – Manse PP", home: false,
+    roles: { tuomari3: "Linus", tulostaulu: "Akseli Ko" } },
+  { id: "g6",  pvm: "29.7", klo: "13:30", kentta: "7. Honkamontun kenttä", joukkueet: "Manse PP – SMJ P16 valk", home: true,
+    roles: { kirjuri: "Urho", takarajatuomari: "Akseli Ko", tuomari2: "Otso" } },
+  { id: "g7",  pvm: "30.7", klo: "10:30", kentta: "8. Honkamontun kenttä", joukkueet: "NiPe – Manse PP", home: false,
+    roles: { tuomari3: "Linus", tulostaulu: "Einari" } },
+  { id: "g8",  pvm: "30.7", klo: "15:30", kentta: "2. Viinijärven Pallokenttä", joukkueet: "Manse PP – Laihia", home: true,
+    roles: { kirjuri: "Urho", takarajatuomari: "Alvar", tuomari2: "Otso" } },
+  { id: "g9",  pvm: "31.7", klo: "08:30", kentta: "2. Viinijärven Pallokenttä", joukkueet: "Manse PP – Pesäkarhut", home: true,
+    roles: { kirjuri: "Alvar", takarajatuomari: "Eemil", tuomari2: "Otso" } },
+  { id: "g10", pvm: "31.7", klo: "12:30", kentta: "13. Jyrin kenttä", joukkueet: "SoJy – Manse PP", home: false,
+    roles: { tuomari3: "Akseli Ko", tulostaulu: "Eemil" } },
+];
+
+// ─── KYYTITARJONTA ─────────────────────────────────────────────────────
+// Ei käytössä tällä sivulla (ei omaa Sheet/Apps Script -julkaisua vielä).
+const KYYTI_API = "TÄYTÄ_TÄHÄN_KYYTI_APPS_SCRIPT_URL";
+
+let gamesData = GAMES;   // valmiiksi täytetty, ei tarvitse hakea
+let gamesError = false;
+let gamesLocked = true;  // lukittu = pelkkä luettava lista, ei ilmoittautumista
+let editing = null;     // { id, role, value } kun nimeä kirjataan/vaihdetaan
+let saving = null;      // { id, role } kun tallennus on käynnissä
+
+// ─── KYYTITARJONTA-LOMAKE ──────────────────────────────────────────────
+// Tiedot haetaan/tallennetaan KYYTI_API:n kautta samalla periaatteella kuin ottelutalkoot.
+let kyytiData = null;    // null = ei vielä haettu, [] = haettu mutta tyhjä
+let kyytiError = false;
+let kyytiFormOpen = false;
+let kyytiSaving = false;
+let kyytiAssignments = []; // Excelissä käsin täytetyt kyytijaot (Auto 1 + kuljettaja + kyytiläiset)
+
+// ─── KYYDIT ──────────────────────────────────────────────────────────────
+// Kyydit pidetään toistaiseksi erillään (siirretään Sheetiin myöhemmin).
+// Ilmoittautuminen näihin tapahtuu valmentajan kautta.
+// roles: [{ role: "Auto 1", driver: "Kuljettajan nimi", passengers: "Kyytiin menijöiden nimet" }]
+// Tyhjä driver ("") näkyy "Avoin"-merkintänä. day-näkymässä näytetään automaattisesti
+// silloin kun kahden peräkkäisen tapahtuman etäisyys on yli 1,5 km ja matka ajetaan autolla.
+const KYYDIT = [
+  { key: "2026-07-27", time: "12:00", title: "Kyydit otteluihin", place: "Majoituskoululta kentälle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  { key: "2026-07-27", time: "12:30", title: "Ottelu (joukkueet täydentyvät)", place: "", roles: [
-      { role: "Kirjuri",     person: "" },
-      { role: "Takatuomari", person: "" },
+  { key: "2026-07-27", time: "19:30", title: "Paluukyydit majoitukselle", place: "Kentältä majoituskoululle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  { key: "2026-07-27", time: "17:30", title: "Ottelu (joukkueet täydentyvät)", place: "", roles: [
-      { role: "Kirjuri",     person: "" },
-      { role: "Takatuomari", person: "" },
+  { key: "2026-07-28", time: "08:00", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  { key: "2026-07-27", time: "19:30", type: "kyyti", title: "Paluukyydit majoitukselle", place: "Kentältä majoituskoululle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
+  { key: "2026-07-28", time: "19:30", title: "Paluukyydit majoitukselle", place: "Kentältä majoituskoululle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  // ── Ti 28.7 ──
-  { key: "2026-07-28", time: "08:00", type: "kyyti", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
+  { key: "2026-07-29", time: "08:00", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  { key: "2026-07-28", time: "08:30", title: "Ottelu (joukkueet täydentyvät)", place: "", roles: [
-      { role: "Kirjuri",     person: "" },
-      { role: "Takatuomari", person: "" },
+  { key: "2026-07-29", time: "19:30", title: "Paluukyydit majoitukselle", place: "Kentältä majoituskoululle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  { key: "2026-07-28", time: "12:30", title: "Ottelu (joukkueet täydentyvät)", place: "", roles: [
-      { role: "Kirjuri",     person: "" },
-      { role: "Takatuomari", person: "" },
+  { key: "2026-07-30", time: "08:00", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  { key: "2026-07-28", time: "19:30", type: "kyyti", title: "Paluukyydit majoitukselle", place: "Kentältä majoituskoululle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
+  { key: "2026-07-30", time: "18:00", title: "Kyydit toimintailtaan", place: "Pärnävaaran liikunta-alueelle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  // ── Ke 29.7 ──
-  { key: "2026-07-29", time: "08:00", type: "kyyti", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
+  { key: "2026-07-31", time: "08:00", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
-  { key: "2026-07-29", time: "08:30", title: "Ottelu (joukkueet täydentyvät)", place: "", roles: [
-      { role: "Kirjuri",     person: "" },
-      { role: "Takatuomari", person: "" },
-  ]},
-  { key: "2026-07-29", time: "19:30", type: "kyyti", title: "Paluukyydit majoitukselle", place: "Kentältä majoituskoululle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
-  ]},
-  // ── To 30.7 ──
-  { key: "2026-07-30", time: "08:00", type: "kyyti", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
-  ]},
-  { key: "2026-07-30", time: "08:30", title: "Ottelu (joukkueet täydentyvät)", place: "", roles: [
-      { role: "Kirjuri",     person: "" },
-      { role: "Takatuomari", person: "" },
-  ]},
-  { key: "2026-07-30", time: "18:00", type: "kyyti", title: "Kyydit toimintailtaan", place: "Pärnävaaran liikunta-alueelle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
-  ]},
-  // ── Pe 31.7 ──
-  { key: "2026-07-31", time: "08:00", type: "kyyti", title: "Kyydit aamuotteluihin", place: "Majoituskoululta kentälle", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
-  ]},
-  { key: "2026-07-31", time: "08:30", title: "Ottelu (joukkueet täydentyvät)", place: "", roles: [
-      { role: "Kirjuri",     person: "" },
-      { role: "Takatuomari", person: "" },
-  ]},
-  { key: "2026-07-31", time: "14:30", type: "kyyti", title: "Kotiinlähtökyydit", place: "Kentältä kotiin", roles: [
-      { role: "Auto 1", person: "" },
-      { role: "Auto 2", person: "" },
-      { role: "Auto 3", person: "" },
+  { key: "2026-07-31", time: "14:30", title: "Kotiinlähtökyydit", place: "Kentältä kotiin", roles: [
+      { role: "Auto 1", driver: "", passengers: "" },
+      { role: "Auto 2", driver: "", passengers: "" },
+      { role: "Auto 3", driver: "", passengers: "" },
   ]},
 ];
 
+
 // ─── RUOKALISTA (päiväkohtainen) ─────────────────────────────────────────
 const MENU = [
-  { day: "Su 26.7", key: "2026-07-26", meals: [
-      { name: "Iltapala", icon: "🥪", time: "Klo 19–21", text: "Jyrin ruokalassa. Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." },
-  ]},
   { day: "Ma 27.7", key: "2026-07-27", meals: [
-      { name: "Aamupala", icon: "☀️", time: "Klo 7–9", text: "Jyrin ruokalassa. Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." },
+      { name: "Aamupala", icon: "☀️", time: "Klo 7–9", text: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." },
       { name: "Lounas", icon: "🍴", time: "Klo 11–13", text: "Lihapyörykät, kastike, peruna, salaattikomponentit, ruisleipä, levite, juomat." },
       { name: "Päivällinen", icon: "🍽️", time: "Klo 16–18", text: "Kahdenkalankeitto, riisipiirakka, munavoi, banaani, ruisleipä, levite, juomat." },
       { name: "Iltapala", icon: "🥪", time: "Klo 19–21", text: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." },
@@ -468,54 +603,43 @@ const MENU = [
 //   accent: true = punainen otsikko
 const DAYS = [
   { key: "2026-07-27", label: "Ma", date: "27.7", events: [
-      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Mahdollisuus aamupalaan", sub: "Varattava erikseen · Jyrin ruokalassa<br>Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." },
-      { time: "09:00", endTime: "12:00", icon: "ℹ️", color: "ic-red", title: "Saapuminen leirille", sub: "" },
-      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas", sub: "Lihapyörykät, kastike, peruna, salaattikomponentit, ruisleipä, levite, juomat." },
-      { time: "13:30", endTime: "14:00", icon: "🎉", color: "ic-red", title: "Leirin avajaiset", accent: true, sub: "" },
-      { time: "12:30", endTime: "16:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "16:00", endTime: "18:00", icon: "🍽️", color: "ic-green", title: "Päivällinen", sub: "Kahdenkalankeitto, riisipiirakka, munavoi, banaani, ruisleipä, levite, juomat." },
-      { time: "17:30", endTime: "19:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "19:00", endTime: "21:00", icon: "🥪", color: "ic-navy", title: "Iltapala", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." },
-      { time: "21:00", endTime: "22:00", icon: "☕", color: "ic-navy", title: "Valmentajien vetäjäkahvit + info", sub: P("patteristo") },
-      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", sub: "" },
+      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Mahdollisuus aamupalaan (06:45–09:00)", loc: "ruokailu", sub: "Varattava erikseen.<br>Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "13:00", endTime: "13:00", icon: "ℹ️", color: "ic-red", title: "Saapuminen leirille", loc: "patteristo", sub: "Kokoontuminen majoituskoululla sekä luokkaan majoittautuminen.<br>" + P("patteristo") },
+      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas (11:00–13:00)", loc: "ruokailu", sub: "Lihapyörykät, kastike, peruna, salaattikomponentit, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "13:30", endTime: "14:00", icon: "🎉", color: "ic-red", title: "Leirin avajaiset", accent: true, loc: "patteristo", sub: "" },
+      { time: "16:00", endTime: "18:00", icon: "🍽️", color: "ic-green", title: "Päivällinen (16:00–18:00)", loc: "ruokailu", sub: "Kahdenkalankeitto, riisipiirakka, munavoi, banaani, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "19:00", endTime: "21:00", icon: "🥪", color: "ic-navy", title: "Iltapala (19:00–21:00)", loc: "ruokailu", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "21:00", endTime: "22:00", icon: "☕", color: "ic-navy", title: "Valmentajien vetäjäkahvit + info", loc: "patteristo", sub: P("patteristo") },
+      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", loc: "patteristo", sub: "" },
   ]},
   { key: "2026-07-28", label: "Ti", date: "28.7", events: [
-      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." },
-      { time: "08:30", endTime: "11:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas", sub: "Broilerinakkikastike, tummariisi, salaattikomponentit, ruisleipä, levite, juomat." },
-      { time: "12:30", endTime: "16:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "16:00", endTime: "18:00", icon: "🍽️", color: "ic-green", title: "Päivällinen", sub: "Jauheliha-makaronilaatikko, tomaattiketsuppi, salaattikomponentit, ruisleipä, levite, juomat." },
-      { time: "17:30", endTime: "19:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "19:00", endTime: "21:00", icon: "🥪", color: "ic-navy", title: "Iltapala", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." },
-      { time: "19:30", endTime: "20:30", icon: "⚾", color: "ic-darkred", title: "Ottelu Tuomarit – Valmentajat", sub: "Patteriston majoituskoulun kentällä — " + P("patteristo") },
-      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", sub: "" },
+      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala (06:45–09:00)", loc: "ruokailu", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas (11:00–13:00)", loc: "ruokailu", sub: "Broilerinakkikastike, tummariisi, salaattikomponentit, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "16:00", endTime: "18:00", icon: "🍽️", color: "ic-green", title: "Päivällinen (16:00–18:00)", loc: "ruokailu", sub: "Jauheliha-makaronilaatikko, tomaattiketsuppi, salaattikomponentit, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "19:00", endTime: "21:00", icon: "🥪", color: "ic-navy", title: "Iltapala (19:00–21:00)", loc: "ruokailu", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "20:00", endTime: "21:00", icon: "⚾", color: "ic-darkred", title: "Ottelu Tuomarit – Valmentajat", loc: "9. Jyrin pesäpallokenttä", sub: fieldInfo("9. Jyrin pesäpallokenttä", { noPesisTV: true }) },
+      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", loc: "patteristo", sub: "" },
   ]},
   { key: "2026-07-29", label: "Ke", date: "29.7", events: [
-      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." },
-      { time: "08:30", endTime: "11:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas", sub: "Pinaatti-raejuustonapit, kermaviilikastike, perunasose, salaattikomponentit, ruisleipä, levite, juomat." },
-      { time: "12:30", endTime: "16:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "15:30", endTime: "17:30", icon: "🍽️", color: "ic-green", title: "Päivällinen", sub: "Broilerikiusaus, salaattikomponentit, ruisleipä, levite, juomat." },
-      { time: "18:00", endTime: "19:30", icon: "🎉", color: "ic-red", title: "Leirin juhlaottelu NYP", accent: true, sub: "" },
-      { time: "19:30", endTime: "21:30", icon: "🥪", color: "ic-navy", title: "Iltapala", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." },
-      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", sub: "" },
+      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala (06:45–09:00)", loc: "ruokailu", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas (11:00–13:00)", loc: "ruokailu", sub: "Pinaatti-raejuustonapit, kermaviilikastike, perunasose, salaattikomponentit, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "15:30", endTime: "17:30", icon: "🍽️", color: "ic-green", title: "Päivällinen (15:30–17:30)", loc: "ruokailu", sub: "Broilerikiusaus, salaattikomponentit, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "18:00", endTime: "19:30", icon: "🎉", color: "ic-red", title: "Leiriottelu Viinijärvi–Ikaalinen", accent: true, loc: "1. Viinijärven Pallokenttä", sub: fieldInfo("1. Viinijärven Pallokenttä", { noPesisTV: true }) },
+      { time: "19:30", endTime: "21:30", icon: "🥪", color: "ic-navy", title: "Iltapala (19:30–21:30)", loc: "ruokailu", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", loc: "patteristo", sub: "" },
   ]},
   { key: "2026-07-30", label: "To", date: "30.7", events: [
-      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." },
-      { time: "08:30", endTime: "11:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas", sub: "Jauhelihakastike, minispagetti, tomaattiketsuppi, salaattikomponentit, ruisleipä, levite, juomat." },
-      { time: "12:30", endTime: "16:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "16:00", endTime: "18:00", icon: "🍽️", color: "ic-green", title: "Päivällinen", sub: "Riisivelli, mansikkarouhe, grahamlihapiirakka, ruisleipä, levite, juomat." },
-      { time: "18:30", endTime: "19:30", icon: "🏃", color: "ic-red", title: "Toimintailta", sub: P("parnavaara") },
-      { time: "19:30", endTime: "21:30", icon: "🥪", color: "ic-navy", title: "Iltapala", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." },
-      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", sub: "" },
+      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala (06:45–09:00)", loc: "ruokailu", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas (11:00–13:00)", loc: "ruokailu", sub: "Jauhelihakastike, minispagetti, tomaattiketsuppi, salaattikomponentit, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "15:30", endTime: "17:30", icon: "🍽️", color: "ic-green", title: "Päivällinen (15:30–17:30)", loc: "ruokailu", sub: "Riisivelli, mansikkarouhe, grahamlihapiirakka, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "17:00", endTime: "20:00", icon: "🏃", color: "ic-red", title: "Toimintailta", loc: "parnavaara", sub: "Leiridisco ja DJ Miki klo 18–20.<br>Lisäksi Pärnävaaran ympäristöstä löytyy Liperin Yrittäjien kesätori, pomppulinna, Kunnarikettu, Suomen ainoa kauppa-auto, jäätelö- ja hattaravaunu ja muuta ohjelmaa.<br>" + P("parnavaara") },
+      { time: "19:30", endTime: "21:30", icon: "🥪", color: "ic-navy", title: "Iltapala (19:30–21:30)", loc: "ruokailu", sub: "Jogurtti, täysjyvämuro, juusto, kalkkunaleike, tuorekasvis, sämpylä, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "22:00", endTime: "23:59", icon: "🌙", color: "ic-navy", title: "Hiljaisuus", loc: "patteristo", sub: "" },
   ]},
   { key: "2026-07-31", label: "Pe", date: "31.7", events: [
-      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." },
-      { time: "08:30", endTime: "11:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
-      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas", sub: "Broilerinugetit, currymajoneesi, perunasose, salaattikomponentit, ruisleipä, levite, juomat." },
-      { time: "11:00", endTime: "13:00", icon: "🏠", color: "ic-darkred", title: "Majoitustilojen luovutukset alkavat", accent: true, sub: "" },
-      { time: "12:30", endTime: "14:30", icon: "⚾", color: "ic-red", title: "Otteluita", sub: "" },
+      { time: "06:45", endTime: "09:00", icon: "☀️", color: "ic-green", title: "Aamupala (06:45–09:00)", loc: "ruokailu", sub: "Hiutalepuuro, mehukeitto, kananmuna, juusto, tuorekasvis, leivät, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "11:00", endTime: "13:00", icon: "🍴", color: "ic-green", title: "Lounas (11:00–13:00)", loc: "ruokailu", sub: "Broilerinugetit, currymajoneesi, perunasose, salaattikomponentit, ruisleipä, levite, juomat." + "<br>" + P("ruokailu") },
+      { time: "11:00", endTime: "13:00", icon: "🏠", color: "ic-darkred", title: "Majoitustilojen luovutukset alkavat", accent: true, loc: "patteristo", sub: "" },
   ]},
 ];
 
@@ -669,7 +793,7 @@ function renderTabs() {
   const tb = document.createElement("button");
   tb.className = "info-tab" + (cur === TALKOOT_TAB ? " active" : "");
   tb.innerHTML = "🙋 Talkoot";
-  tb.onclick = () => { selectedTab = TALKOOT_TAB; render(); };
+  tb.onclick = () => { selectedTab = TALKOOT_TAB; render(); fetchGames(); fetchKyydit(); };
   infoCont.appendChild(tb);
 
   const mb = document.createElement("button");
@@ -704,10 +828,9 @@ function renderAddressesTab() {
 
   // Ylimääräiset majoituspaikat poistetaan myöhemmin, kun oma koulu varmistuu
   const groups = [
-    { icon: "🏠", color: "ic-darkred", title: "Majoituskoulut", places: ["patteristo", "paloaukea", "jyri", "paloaukeaPk", "lautasuoPk", "liperinKoulu"] },
+    { icon: "🏠", color: "ic-darkred", title: "Majoituskoulu", places: ["patteristo"] },
     { icon: "🏃", color: "ic-red",     title: "Toimintailta", places: ["parnavaara"] },
     { icon: "🍴", color: "ic-green",   title: "Ruokailu", places: ["ruokailu"] },
-    { icon: "⚾", color: "ic-red",     title: "Pelikentät", places: ["kentta1"] },
   ];
 
   groups.forEach(g => {
@@ -722,6 +845,26 @@ function renderAddressesTab() {
       </div>`;
     list.appendChild(div);
   });
+
+  // ── Pelikentät (nimi karttalinkkinä, alle osoite ja pinta) ──
+  const fieldsHtml = FIELDS.map(f => `
+    <div style="margin-bottom:12px;">
+      <div style="font-weight:600;">${f.mapUrl ? `<a class="maplink" href="${esc(f.mapUrl)}" target="_blank" rel="noopener">📍 ${f.name}</a>` : mapLink(f.name, f.addr)}${f.pesisTV ? ' <span style="background:#e2e007;color:#1a1a2e;font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;vertical-align:middle;">PESIS TV</span>' : ""}</div>
+      <div style="font-size:12.5px;color:var(--sub);margin-top:1px;">${f.addr}</div>
+      <div style="font-size:12.5px;color:var(--sub);">Pinta: ${f.surface}</div>
+      ${f.wc ? `<div style="font-size:12.5px;color:var(--sub);">Wc ja vesipiste: ${f.wc}</div>` : ""}
+      ${f.parking ? `<div style="font-size:12.5px;color:var(--sub);">Parkkipaikka: ${f.parking}</div>` : ""}
+      ${f.kiosk ? `<div style="font-size:12.5px;color:var(--sub);">${f.kiosk === true ? "Kioski" : f.kiosk}</div>` : ""}
+    </div>`).join("");
+  const fdiv = document.createElement("div");
+  fdiv.className = "addr-card";
+  fdiv.innerHTML = `
+    <div class="ev-icon ic-red">⚾</div>
+    <div class="ev-body">
+      <h3>Pelikentät</h3>
+      <p>${fieldsHtml}</p>
+    </div>`;
+  list.appendChild(fdiv);
 }
 
 function renderMenuTab() {
@@ -868,65 +1011,418 @@ function renderWeatherTab() {
   });
 }
 
+// ─── OTTELUDATAN HAKU JA TALLENNUS ───────────────────────────────────────
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Yhdistää ottelun pvm:n (esim. "28.7.") leiripäivään DAYS-listalta.
+// Muuntaa pvm:n siistiksi muotoon "d.m" — hyväksyy sekä "29.7." / "29.7" että
+// raa'an JS Date -merkkijonon (esim. "Wed Jul 29 2026 03:00:00 GMT+0300 ...").
+function normalizePvm(pvm) {
+  let s = String(pvm).trim();
+  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
+  if (m) return m[1] + "." + m[2];
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.getDate() + "." + (d.getMonth() + 1);
+  return s;
+}
+
+function normalizeKlo(klo) {
+  const s = String(klo || "").trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  return m ? (String(parseInt(m[1], 10)).padStart(2, "0") + ":" + m[2]) : s;
+}
+
+// ─── PÖYTÄKIRJALINKIT (käsin annettu lista, ei tule Sheetistä) ────────────
+// Avain: "päivä|klo|joukkueet" normalisoituna. Ei muuta mitään muuta ottelutietoa.
+// Tyhjä toistaiseksi tälle joukkueelle — lisää tähän samaan tapaan kuin toisella sivulla.
+const GAME_LINKS = {
+};
+
+function findGameLink(g) {
+  const key = normalizePvm(g.pvm) + "|" + normalizeKlo(g.klo) + "|" + String(g.joukkueet || "").trim();
+  return GAME_LINKS[key] || null;
+}
+
+function gameDayInfo(pvm) {
+  const norm = normalizePvm(pvm);
+  for (let i = 0; i < DAYS.length; i++) {
+    if (DAYS[i].date.replace(/\.+$/, "") === norm) {
+      return { idx: i, key: DAYS[i].key, label: DAYS[i].label, date: DAYS[i].date };
+    }
+  }
+  return { idx: 99, key: null, label: "", date: norm };
+}
+
+async function fetchGames() {
+  // Ei verkkokutsua — GAMES on valmiiksi kirjoitettu, staattinen lista.
+  gamesData = GAMES;
+  gamesError = false;
+  const ct = getCurrentTab();
+  if (ct === TALKOOT_TAB || (ct >= 0 && ct < DAYS.length)) renderEvents();
+}
+
+async function postTalkoo(id, role, name) {
+  if (gamesLocked) { await fetchGames(); return; }
+  saving = { id, role };
+  if (getCurrentTab() === TALKOOT_TAB) renderTalkootTab();
+  try {
+    await fetch(TALKOOT_API, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // välttää CORS-esitarkistuksen
+      body: JSON.stringify({ id: id, role: role, name: name }),
+    });
+  } catch (err) {
+    console.warn("Tallennus epäonnistui:", err);
+  }
+  await new Promise(r => setTimeout(r, 400));
+  saving = null;
+  await fetchGames();
+}
+
+function findGameRole(id, role) {
+  const g = (gamesData || []).find(x => x.id === id);
+  return g ? { game: g, name: g.roles[role] || "" } : null;
+}
+
+function startTalkooEdit(id, role) {
+  if (gamesLocked) return;
+  const fr = findGameRole(id, role);
+  editing = { id: id, role: role, value: fr ? fr.name : "" };
+  renderTalkootTab();
+  setTimeout(() => {
+    const el = document.getElementById("talkooInput");
+    if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }
+  }, 0);
+}
+
+function cancelTalkooEdit() { editing = null; renderTalkootTab(); }
+
+async function fetchKyydit() {
+  if (!KYYTI_API || KYYTI_API.indexOf("TÄYTÄ_TÄHÄN") === 0) return; // API-osoitetta ei ole vielä asetettu
+  try {
+    const res = await fetch(KYYTI_API + "?t=" + Date.now(), { method: "GET", cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    kyytiData = Array.isArray(data.entries) ? data.entries : [];
+    kyytiAssignments = Array.isArray(data.assignments) ? data.assignments : [];
+    kyytiError = false;
+  } catch (err) {
+    console.warn("Kyytitietojen haku epäonnistui:", err);
+    kyytiError = true;
+  }
+  const ct = getCurrentTab();
+  if (ct === TALKOOT_TAB || (ct >= 0 && ct < DAYS.length)) renderEvents();
+}
+
+// Palauttaa Excelissä täytetyt kyytijaot annetulle päivälle (esim. "27.7")
+function assignmentsForDay(dateStr) {
+  return kyytiAssignments.filter(a => a.day === dateStr);
+}
+
+async function submitKyytiIlmoitus() {
+  const nameEl = document.getElementById("kyytiNameInput");
+  const seatsEl = document.getElementById("kyytiSeatsInput");
+  const name = nameEl ? nameEl.value.trim() : "";
+  if (!name) { nameEl && nameEl.focus(); return; }
+  const days = DAYS.filter(d => {
+    const cb = document.getElementById("kyytiDay_" + d.key);
+    return cb && cb.checked;
+  }).map(d => `${d.label} ${d.date}`);
+  const seats = seatsEl ? parseInt(seatsEl.value, 10) || 1 : 1;
+  const id = "k" + Date.now() + Math.random().toString(36).slice(2, 7);
+
+  kyytiSaving = true;
+  renderTalkootTab();
+  try {
+    await fetch(KYYTI_API, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // välttää CORS-esitarkistuksen
+      body: JSON.stringify({ action: "add", id, name, days, seats }),
+    });
+  } catch (err) {
+    console.warn("Kyytitarjonnan tallennus epäonnistui:", err);
+  }
+  kyytiSaving = false;
+  kyytiFormOpen = false;
+  await fetchKyydit();
+}
+
+async function removeKyytiIlmoitus(id) {
+  if (!confirm("Poistetaanko tämä kyytitarjonta?")) return;
+  kyytiSaving = true;
+  renderTalkootTab();
+  try {
+    await fetch(KYYTI_API, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "remove", id }),
+    });
+  } catch (err) {
+    console.warn("Kyytitarjonnan poisto epäonnistui:", err);
+  }
+  kyytiSaving = false;
+  await fetchKyydit();
+}
+
+async function saveTalkooEdit() {
+  const el = document.getElementById("talkooInput");
+  if (!el || !editing) return;
+  const newName = el.value.trim();
+  if (!newName) { cancelTalkooEdit(); return; }
+  const fr = findGameRole(editing.id, editing.role);
+  const oldName = fr ? fr.name : "";
+  if (oldName && oldName !== newName &&
+      !confirm("Korvataanko " + oldName + " nimellä " + newName + "?")) return;
+  const id = editing.id, role = editing.role;
+  editing = null;
+  await postTalkoo(id, role, newName);
+}
+
+async function removeTalkooName(id, role) {
+  const fr = findGameRole(id, role);
+  const name = fr ? fr.name : "";
+  if (name && !confirm("Poistetaanko " + name + " tästä vuorosta?")) return;
+  editing = null;
+  await postTalkoo(id, role, "");
+}
+
+function btnStyle(filled) {
+  return filled
+    ? "font-size:12px;font-weight:700;color:#fff;background:var(--red);border:1px solid var(--red);border-radius:8px;padding:3px 11px;margin-left:8px;cursor:pointer;"
+    : "font-size:12px;font-weight:600;color:var(--red);background:#fff;border:1px solid var(--red);border-radius:8px;padding:3px 10px;margin-left:6px;cursor:pointer;";
+}
+
+function roleRowHtml(game, def) {
+  const id = game.id, key = def.key;
+  const name = game.roles[key] || "";
+  const isEditing = editing && editing.id === id && editing.role === key;
+  const isSaving = saving && saving.id === id && saving.role === key;
+
+  let body;
+  if (gamesLocked) {
+    body = name ? esc(name) : `<span style="color:var(--sub);">Avoin</span>`;
+  } else if (isSaving) {
+    body = `<span style="color:var(--sub);">⏳ Tallennetaan…</span>`;
+  } else if (isEditing) {
+    body = `<input id="talkooInput" type="text" maxlength="60" value="${esc(editing.value)}" placeholder="Nimesi"
+              style="font-size:14px;padding:4px 8px;border:1px solid var(--red);border-radius:8px;width:140px;"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();saveTalkooEdit();}if(event.key==='Escape'){cancelTalkooEdit();}">
+            <button style="${btnStyle(true)}" onclick="saveTalkooEdit()">Tallenna</button>
+            <button style="${btnStyle(false)}" onclick="cancelTalkooEdit()">Peruuta</button>`;
+  } else if (name) {
+    body = `${esc(name)}
+            <button style="${btnStyle(false)}" onclick="startTalkooEdit('${id}','${key}')">Vaihda</button>
+            <button style="${btnStyle(false)}" onclick="removeTalkooName('${id}','${key}')">Poista</button>`;
+  } else {
+    body = `<span style="color:var(--red);font-weight:700;">❗ Avoin</span>
+            <button style="${btnStyle(true)}" onclick="startTalkooEdit('${id}','${key}')">Ilmoittaudu</button>`;
+  }
+  return `<div style="margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:2px 0;">
+            <strong style="margin-right:6px;">${def.label}:</strong> ${body}
+          </div>`;
+}
+
 function renderTalkootTab() {
   document.getElementById("nextBanner").classList.remove("visible");
   document.getElementById("weatherCard").classList.remove("visible");
   const list = document.getElementById("eventList");
   list.innerHTML = "";
+  const tk = todayKey();
 
-  const wdNames = ["Su","Ma","Ti","Ke","To","Pe","La"];
+  // ── Avoimet vuorot ──
+  let openShifts = 0;
+  (gamesData || []).forEach(g => {
+    (g.home ? HOME_ROLE_DEFS : AWAY_ROLE_DEFS).forEach(def => {
+      if (!(g.roles[def.key] || "").trim()) openShifts++;
+    });
+  });
 
-  // Yhteenveto avoimista vuoroista ja kyydeistä
-  let openShifts = 0, openRides = 0;
-  TALKOOT.forEach(t => t.roles.forEach(r => {
-    if (!r.person) { if (t.type === "kyyti") openRides++; else openShifts++; }
-  }));
-  const totalOpen = openShifts + openRides;
-
+  // ── Yhteenvetopalkki ──
   const summary = document.createElement("div");
-  summary.style.cssText = totalOpen > 0
-    ? "background:var(--now-bg);border:2px solid var(--now-border);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px;font-weight:700;color:#A87800;"
-    : "background:#E8F5EC;border:2px solid var(--green);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px;font-weight:700;color:var(--green);";
-  summary.innerHTML = totalOpen > 0
-    ? `🙋 Avoimia talkoovuoroja: ${openShifts} &nbsp;·&nbsp; 🚗 Avoimia kyytejä: ${openRides}<br><span style="font-size:12px;font-weight:600;">Ilmoittaudu valmentajalle!</span>`
-    : "✅ Kaikki talkoovuorot ja kyydit täytetty — kiitos!";
+  if (gamesData === null && gamesError) {
+    summary.style.cssText = "background:#FCEBEB;border:2px solid var(--red);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:13.5px;font-weight:600;color:var(--darkred);";
+    summary.innerHTML = "⚠️ Otteluiden haku ei juuri nyt onnistu. Yritetään uudelleen automaattisesti — tarkista verkkoyhteys tai päivitä sivu.";
+  } else if (gamesData === null) {
+    summary.style.cssText = "background:var(--now-bg);border:2px solid var(--now-border);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px;font-weight:600;color:#A87800;";
+    summary.innerHTML = "Haetaan otteluita…";
+  } else {
+    const ok = openShifts === 0;
+    summary.style.cssText = ok
+      ? "background:#E8F5EC;border:2px solid var(--green);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px;font-weight:700;color:var(--green);"
+      : "background:var(--now-bg);border:2px solid var(--now-border);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px;font-weight:700;color:#A87800;";
+    summary.innerHTML = ok
+      ? "✅ Kaikki ottelutalkoot täytetty — kiitos!"
+      : `🙋 Avoimia ottelutalkoita: ${openShifts}` + (gamesLocked
+          ? ``
+          : `<br><span style="font-size:12px;font-weight:600;">Ilmoittaudu painamalla "Ilmoittaudu" pelin kohdalla.</span>`);
+  }
   list.appendChild(summary);
 
-  // Ryhmittele päivittäin
-  const tk = todayKey();
-  let lastKey = null;
-  TALKOOT
-    .slice()
-    .sort((a, b) => a.key === b.key ? a.time.localeCompare(b.time) : a.key.localeCompare(b.key))
-    .forEach(t => {
-      if (t.key !== lastKey) {
-        lastKey = t.key;
-        const d = new Date(t.key + "T12:00:00");
+  if (gamesLocked) {
+    const lk = document.createElement("div");
+    lk.style.cssText = "background:#EDEEF3;border:2px solid var(--navy);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px;font-weight:700;color:var(--navy);";
+    lk.innerHTML = "🔒 Talkoolista on lukittu. Vuoroihin ei voi enää tehdä muutoksia sivustolla.";
+    list.appendChild(lk);
+  }
+
+  // ── Ottelut ryhmiteltynä päivittäin ──
+  if (gamesData && gamesData.length) {
+    const groups = {};
+    gamesData.forEach(g => {
+      const di = gameDayInfo(g.pvm);
+      const k = di.key || ("x" + di.date);
+      (groups[k] = groups[k] || { di: di, games: [] }).games.push(g);
+    });
+    Object.keys(groups)
+      .sort((a, b) => groups[a].di.idx - groups[b].di.idx || (groups[a].di.date > groups[b].di.date ? 1 : -1))
+      .forEach(k => {
+        const grp = groups[k];
         const hdr = document.createElement("div");
         hdr.style.cssText = "font-size:16px;font-weight:700;color:var(--red);margin:14px 4px 8px;";
-        hdr.innerHTML = `${wdNames[d.getDay()]} ${d.getDate()}.${d.getMonth()+1}.`
-          + (t.key === tk ? ' <span style="background:var(--now-border);color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;vertical-align:middle;text-transform:uppercase;">Tänään</span>' : "");
+        const dayLabel = grp.di.label ? `${grp.di.label} ${grp.di.date}` : grp.di.date;
+        hdr.innerHTML = dayLabel
+          + (grp.di.key === tk ? ' <span style="background:var(--now-border);color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;vertical-align:middle;text-transform:uppercase;">Tänään</span>' : "");
         list.appendChild(hdr);
-      }
 
-      const rolesHtml = t.roles.map(r => r.person
-        ? `<div style="margin-top:3px;"><strong>${r.role}:</strong> ${r.person}</div>`
-        : `<div style="margin-top:3px;"><strong>${r.role}:</strong> <span style="color:var(--red);font-weight:700;">❗ Avoin — ilmoittaudu!</span></div>`
+        grp.games
+          .slice()
+          .sort((a, b) => (a.klo || "").localeCompare(b.klo || "") || (a.joukkueet || "").localeCompare(b.joukkueet || ""))
+          .forEach(g => {
+            const defs = g.home ? HOME_ROLE_DEFS : AWAY_ROLE_DEFS;
+            const rolesHtml = defs.map(def => roleRowHtml(g, def)).join("");
+            const meta = [g.klo, g.kentta].filter(Boolean).join(" · ");
+            const poytakirjaUrl = g.poytakirja || findGameLink(g);
+            const poytakirjaHtml = poytakirjaUrl
+              ? `<div style="margin-top:4px;"><a class="maplink" href="${esc(poytakirjaUrl)}" target="_blank" rel="noopener">📋 Pesistulokset</a></div>`
+              : "";
+            const div = document.createElement("div");
+            div.className = "event";
+            div.innerHTML = `
+              <div class="ev-icon ic-red">⚾</div>
+              <div class="ev-body">
+                ${meta ? `<div class="ev-time">${esc(meta)}</div>` : ""}
+                <div class="ev-title">${esc(g.joukkueet)}</div>
+                <div class="ev-sub">${rolesHtml}</div>
+                ${poytakirjaHtml}
+              </div>`;
+            list.appendChild(div);
+          });
+      });
+  } else if (gamesData && gamesData.length === 0) {
+    const p = document.createElement("p");
+    p.style.cssText = "font-size:13.5px;color:var(--sub);margin:4px 4px 10px;";
+    p.innerHTML = "<em>Otteluita ei ole vielä lisätty taulukkoon. Ne ilmestyvät tähän automaattisesti.</em>";
+    list.appendChild(p);
+  }
+
+  // ── Kyydit (erillinen osio) ──
+  const kyytiHdr = document.createElement("div");
+  kyytiHdr.style.cssText = "font-size:16px;font-weight:700;color:var(--navy);margin:20px 4px 8px;";
+  kyytiHdr.innerHTML = "🚗 Kyydit";
+  list.appendChild(kyytiHdr);
+
+  const kyytiCard = document.createElement("div");
+  kyytiCard.className = "addr-card";
+  kyytiCard.style.cssText = "display:block;margin-bottom:14px;";
+  const dayChecks = DAYS.map(d =>
+    `<label style="display:inline-flex;align-items:center;gap:3px;font-size:12.5px;margin:3px 10px 3px 0;">
+       <input type="checkbox" id="kyytiDay_${d.key}" style="width:15px;height:15px;">${d.label} ${d.date}
+     </label>`
+  ).join("");
+
+  if (kyytiFormOpen) {
+    kyytiCard.innerHTML = `
+      <div class="ev-icon ic-blue">🚗</div>
+      <div class="ev-body">
+        <h3>Ilmoita kyytitarjonta</h3>
+        <div style="margin-top:6px;">
+          <input id="kyytiNameInput" type="text" maxlength="60" placeholder="Nimesi" ${kyytiSaving ? "disabled" : ""}
+            style="font-size:14px;padding:6px 10px;border:1px solid var(--red);border-radius:8px;width:100%;max-width:220px;box-sizing:border-box;">
+        </div>
+        <div style="margin-top:8px;font-size:12.5px;font-weight:600;color:var(--sub);">Läsnäolopäivät:</div>
+        <div style="margin-top:2px;">${dayChecks}</div>
+        <div style="margin-top:8px;">
+          <label style="font-size:12.5px;font-weight:600;color:var(--sub);">Vapaita paikkoja autossa:</label><br>
+          <div style="font-size:11.5px;color:var(--red);font-weight:600;margin-top:2px;">Älä laske tähän omaa lastasi mukaan — merkitse montako vapaata paikkaa autossa on pelaajille.</div>
+          <input id="kyytiSeatsInput" type="number" min="1" max="8" value="3" ${kyytiSaving ? "disabled" : ""}
+            style="font-size:14px;padding:6px 10px;border:1px solid var(--red);border-radius:8px;width:70px;margin-top:5px;">
+        </div>
+        <div style="margin-top:10px;">
+          ${kyytiSaving
+            ? `<span style="color:var(--sub);font-size:13px;">⏳ Tallennetaan…</span>`
+            : `<button style="${btnStyle(true)}" onclick="submitKyytiIlmoitus()">Ilmoittaudu</button>
+               <button style="${btnStyle(false)}" onclick="kyytiFormOpen=false;renderTalkootTab();">Peruuta</button>`}
+        </div>
+      </div>`;
+  } else {
+    kyytiCard.innerHTML = `
+      <div class="ev-icon ic-blue">🚗</div>
+      <div class="ev-body">
+        <h3>Onko sinulla auto käytössä?</h3>
+        <p style="margin:2px 0 0;">Ilmoita läsnäolopäiväsi ja montako paikkaa autossasi on vapaana — näin kyytijaot on helpompi tehdä otteluohjelman valmistuttua.</p>
+        <button style="${btnStyle(true)};margin-top:8px;" onclick="kyytiFormOpen=true;renderTalkootTab();">Ilmoita kyytitarjonta</button>
+      </div>`;
+  }
+  list.appendChild(kyytiCard);
+
+  if (!KYYTI_API || KYYTI_API.indexOf("TÄYTÄ_TÄHÄN") === 0) {
+    const note = document.createElement("p");
+    note.style.cssText = "font-size:12.5px;color:var(--sub);margin:4px 4px 10px;";
+    note.innerHTML = "<em>⚠️ Kyytitarjonnan tallennus ei ole vielä käytössä (API-osoitetta ei ole asetettu koodiin).</em>";
+    list.appendChild(note);
+  } else if (kyytiError) {
+    const note = document.createElement("p");
+    note.style.cssText = "font-size:12.5px;color:var(--darkred);margin:4px 4px 10px;font-weight:600;";
+    note.innerHTML = "⚠️ Kyytitietojen haku ei juuri nyt onnistu.";
+    list.appendChild(note);
+  }
+  // Huom: yksittäisiä kyytitarjontailmoituksia ei näytetä julkisesti täällä —
+  // ne näkyvät suoraan Sheetin "Kyydit"-välilehdellä. Sivustolla näytetään
+  // vain valmentajan Exceliin kirjaamat lopulliset kyytijaot (ks. alla).
+
+  // ── Autokyydit (Excelissä käsin täytetyt kyytijaot, ryhmiteltynä päivittäin) ──
+  if (kyytiAssignments.length) {
+    const carHdr = document.createElement("div");
+    carHdr.style.cssText = "font-size:16px;font-weight:700;color:var(--navy);margin:20px 4px 8px;";
+    carHdr.innerHTML = "🚗 Autokyydit";
+    list.appendChild(carHdr);
+
+    DAYS.forEach(d => {
+      const cars = assignmentsForDay(d.date);
+      if (!cars.length) return;
+      const hdr = document.createElement("div");
+      hdr.style.cssText = "font-size:13px;font-weight:700;color:var(--sub);margin:10px 4px 4px;";
+      hdr.innerHTML = `${d.label} ${d.date}`
+        + (d.key === tk ? ' <span style="background:var(--now-border);color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;vertical-align:middle;text-transform:uppercase;">Tänään</span>' : "");
+      list.appendChild(hdr);
+
+      const carsHtml = cars.map(c =>
+        `<div style="margin-top:3px;"><strong>${esc(c.car)}:</strong> ` +
+        (c.driver
+          ? `${esc(c.driver)}${c.passengers ? ` <span style="color:var(--sub);">(kyytiläiset: ${esc(c.passengers)})</span>` : ""}`
+          : `<span style="color:var(--red);font-weight:700;">Ei vielä sovittu</span>`)
+        + `</div>`
       ).join("");
-
-      const isRide = t.type === "kyyti";
       const div = document.createElement("div");
       div.className = "event";
       div.innerHTML = `
-        <div class="ev-icon ${isRide ? "ic-blue" : "ic-red"}">${isRide ? "🚗" : "🙋"}</div>
+        <div class="ev-icon ic-blue">🚗</div>
         <div class="ev-body">
-          <div class="ev-time">${t.time}</div>
-          <div class="ev-title">${t.title}</div>
-          ${t.place ? `<div class="ev-sub">${t.place}</div>` : ""}
-          <div class="ev-sub">${rolesHtml}</div>
+          <div class="ev-sub">${carsHtml}</div>
         </div>`;
       list.appendChild(div);
     });
+  }
+}
+
+function addMin(hhmm, add) {
+  const t = toMin(hhmm);
+  if (t == null) return null;
+  const x = Math.min(t + add, 23 * 60 + 59);
+  return String(Math.floor(x / 60)).padStart(2, "0") + ":" + String(x % 60).padStart(2, "0");
 }
 
 function renderEvents() {
@@ -937,7 +1433,46 @@ function renderEvents() {
   if (tab === WEATHER_TAB) { renderWeatherTab(); return; }
   if (tab === TALKOOT_TAB) { renderTalkootTab(); return; }
 
-  const day = DAYS[tab];
+  const baseDay = DAYS[tab];
+
+  // Yhdistä Sheetin ottelut tämän päivän aikajanalle
+  const gameEvents = (gamesData || [])
+    .filter(g => gameDayInfo(g.pvm).key === baseDay.key)
+    .map(g => {
+      const defs = g.home ? HOME_ROLE_DEFS : AWAY_ROLE_DEFS;
+      const roleLines = defs.map(d => {
+        const nm = (g.roles[d.key] || "").trim();
+        return `<div style="margin-top:2px;"><strong>${d.label}:</strong> `
+          + (nm ? esc(nm) : `<span style="color:var(--red);font-weight:700;">Avoin</span>`)
+          + `</div>`;
+      }).join("");
+      const knownField = g.kentta ? fieldByName(g.kentta) : null;
+      const fieldLine = knownField
+        ? `<div style="margin-bottom:4px;">${fieldInfo(g.kentta)}</div>`
+        : (g.kentta ? `<div>${esc(g.kentta)}</div>` : "");
+      const poytakirjaUrl2 = g.poytakirja || findGameLink(g);
+      const poytakirjaLine = poytakirjaUrl2
+        ? `<div style="margin-top:4px;"><a class="maplink" href="${esc(poytakirjaUrl2)}" target="_blank" rel="noopener">📋 Pesistulokset</a></div>`
+        : "";
+      return {
+        time: g.klo,
+        endTime: addMin(g.klo, 60),
+        icon: "⚾",
+        color: "ic-red",
+        title: esc(g.joukkueet),
+        loc: knownField ? g.kentta : null,
+        sub: fieldLine + roleLines + poytakirjaLine,
+      };
+    });
+  // Yhdistä päivän kiinteät tapahtumat ja Sheetistä haetut oikeat ottelut
+  const baseEvents = baseDay.events;
+  const mergedEvents = baseEvents.concat(gameEvents)
+    .sort((a, b) => {
+      const ta = toMin(a.time), tb = toMin(b.time);
+      return (ta == null ? 1e9 : ta) - (tb == null ? 1e9 : tb);
+    });
+  const day = Object.assign({}, baseDay, { events: mergedEvents });
+
   const statuses = computeStatuses(day);
   const nextIdx = findNextEvent(day, statuses);
 
@@ -959,6 +1494,20 @@ function renderEvents() {
   const list = document.getElementById("eventList");
   list.innerHTML = "";
   day.events.forEach((e, i) => {
+    // Etäisyystieto edellisestä tapahtumasta tähän, jos sijainti vaihtuu
+    const prev = i > 0 ? day.events[i - 1] : null;
+    const prevLoc = eventLocation(prev);
+    const curLoc = eventLocation(e);
+    if (prevLoc && curLoc && prevLoc.addr !== curLoc.addr) {
+      const travel = document.createElement("div");
+      travel.style.cssText = "margin:2px 0 2px 44px;font-size:12.5px;";
+      travel.dataset.fromAddr = prevLoc.addr;
+      travel.dataset.toAddr = curLoc.addr;
+      travel.innerHTML = "Lasketaan etäisyyttä…";
+      list.appendChild(travel);
+      updateDistanceEl(travel, prevLoc.addr, curLoc.addr, day.date);
+    }
+
     const div = document.createElement("div");
     div.className = "event " + (statuses[i] || "");
     div.innerHTML = `
@@ -970,6 +1519,31 @@ function renderEvents() {
       </div>`;
     list.appendChild(div);
   });
+}
+
+async function updateDistanceEl(el, fromAddr, toAddr, dayDate) {
+  const [a, b] = await Promise.all([geocodeAddress(fromAddr), geocodeAddress(toAddr)]);
+  if (!el.isConnected) return; // näkymä on jo vaihtunut
+  if (!a || !b) { el.innerHTML = ""; return; }
+  const km = haversineKm(a, b);
+  const dist = formatDistance(km);
+  let html = dist.html;
+
+  if (dist.needsCar) {
+    const cars = assignmentsForDay(dayDate);
+    if (cars.length) {
+      html += cars.map(c =>
+        `<div style="margin-top:2px;">🚗 <strong>${esc(c.car)}:</strong> ` +
+        (c.driver
+          ? `${esc(c.driver)}${c.passengers ? ` (kyytiläiset: ${esc(c.passengers)})` : ""}`
+          : `<span style="color:var(--red);font-weight:700;">Ei vielä sovittu</span>`)
+        + `</div>`
+      ).join("");
+    } else {
+      html += `<div style="margin-top:2px;color:var(--sub);">🚗 Kyyti tarvitaan</div>`;
+    }
+  }
+  el.innerHTML = html;
 }
 
 function renderClock() {
@@ -988,7 +1562,15 @@ function render() {
 
 render();
 fetchWeather(); // hae sää heti sivun avautuessa
+fetchGames();   // hae ottelut ja talkoot heti
+fetchKyydit();  // hae kyytitarjonta heti
 setInterval(fetchWeather, 60 * 60 * 1000); // päivitä sää tunnin välein
+setInterval(() => {
+  // päivitä ottelut/talkoot säännöllisesti, mutta ei kesken kirjaamisen
+  const t = getCurrentTab();
+  if (!editing && !saving && (t === TALKOOT_TAB || (t >= 0 && t < DAYS.length))) fetchGames();
+  if (t === TALKOOT_TAB && !kyytiFormOpen && !kyytiSaving) fetchKyydit();
+}, 45000);
 setInterval(() => {
   if (!INFO_TABS.includes(getCurrentTab())) render();
   else renderClock();
